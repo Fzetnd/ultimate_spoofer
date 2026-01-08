@@ -1,0 +1,61 @@
+name: Build Ultimate Spoofer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Setup WDK
+      shell: powershell
+      run: |
+        choco install windows-driver-kit -y
+        
+    - name: Patch windef.hpp for MSVC compatibility
+      shell: powershell
+      run: |
+        $file = "driver_shellcode\windef.hpp"
+        
+        # Backup original
+        Copy-Item $file "$file.backup"
+        
+        # Read content
+        $content = Get-Content $file -Raw
+        
+        # Add MSVC alignment macro after #pragma once
+        $content = $content -replace '(#pragma once)', "`$1`r`n`r`n#ifdef _MSC_VER`r`n    #define ALIGN(x) __declspec(align(x))`r`n#else`r`n    #define ALIGN(x) __attribute__((aligned(x)))`r`n#endif"
+        
+        # Replace all __attribute__((aligned(X))) with ALIGN(X)
+        $content = $content -replace '__attribute__\(\(aligned\((\d+)\)\)\)', 'ALIGN($1)'
+        
+        # Write back
+        Set-Content $file $content
+        
+        Write-Host "Patched windef.hpp successfully"
+    
+    - name: Build solution
+      shell: cmd
+      run: |
+        msbuild ultimate_spoofer.sln /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:WDKContentRoot="C:\Program Files (x86)\Windows Kits\10\" /p:TreatWarningAsError=false /p:PreprocessorDefinitions="_CRT_SECURE_NO_WARNINGS" /m
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: ultimate-spoofer-debug-x64
+        path: |
+          x64/Debug/*.exe
+          x64/Debug/*.dll
+          x64/Debug/*.sys
