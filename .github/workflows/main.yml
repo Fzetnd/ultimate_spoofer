@@ -29,6 +29,16 @@ jobs:
         Start-Process -FilePath "$env:TEMP\wdksetup.exe" -ArgumentList "/quiet", "/norestart" -Wait
         
         Write-Host "WDK installation complete"
+    
+    - name: Add ATL components
+      shell: powershell
+      run: |
+        # Install ATL via Visual Studio installer
+        $vsInstallerPath = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
+        if (Test-Path $vsInstallerPath) {
+          Write-Host "Installing ATL components..."
+          Start-Process -FilePath $vsInstallerPath -ArgumentList "modify", "--installPath", "C:\Program Files\Microsoft Visual Studio\2022\Enterprise", "--add", "Microsoft.VisualStudio.Component.VC.ATL", "--quiet", "--norestart" -Wait
+        }
         
     - name: Patch windef.hpp for MSVC compatibility
       shell: powershell
@@ -52,10 +62,43 @@ jobs:
         
         Write-Host "Patched windef.hpp successfully"
     
+    - name: Add _CRT_SECURE_NO_WARNINGS to spoof_checker
+      shell: powershell
+      run: |
+        # Add to all .cpp files in spoof_checker
+        Get-ChildItem "spoof_checker\*.cpp" | ForEach-Object {
+          $content = Get-Content $_.FullName -Raw
+          if ($content -notmatch '#define _CRT_SECURE_NO_WARNINGS') {
+            $newContent = "#define _CRT_SECURE_NO_WARNINGS`r`n" + $content
+            Set-Content $_.FullName $newContent
+          }
+        }
+        Write-Host "Added _CRT_SECURE_NO_WARNINGS to spoof_checker files"
+    
+    - name: Retarget solution to available SDK
+      shell: powershell
+      run: |
+        # Find available Windows SDK version
+        $sdkPath = "C:\Program Files (x86)\Windows Kits\10\Include"
+        $availableSDKs = Get-ChildItem $sdkPath | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending
+        
+        if ($availableSDKs.Count -gt 0) {
+          $latestSDK = $availableSDKs[0].Name
+          Write-Host "Found Windows SDK: $latestSDK"
+          
+          # Update all .vcxproj files to use the available SDK
+          Get-ChildItem -Recurse -Filter "*.vcxproj" | ForEach-Object {
+            $content = Get-Content $_.FullName -Raw
+            $content = $content -replace '<WindowsTargetPlatformVersion>[\d\.]+</WindowsTargetPlatformVersion>', "<WindowsTargetPlatformVersion>$latestSDK</WindowsTargetPlatformVersion>"
+            Set-Content $_.FullName $content
+            Write-Host "Updated $($_.Name) to SDK $latestSDK"
+          }
+        }
+    
     - name: Build solution
       shell: cmd
       run: |
-        msbuild ultimate_spoofer.sln /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:WDKContentRoot="C:\Program Files (x86)\Windows Kits\10\" /p:TreatWarningAsError=false /p:PreprocessorDefinitions="_CRT_SECURE_NO_WARNINGS" /m
+        msbuild ultimate_spoofer.sln /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:WDKContentRoot="C:\Program Files (x86)\Windows Kits\10\" /p:TreatWarningAsError=false /m
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
