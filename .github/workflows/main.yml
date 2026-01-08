@@ -21,7 +21,14 @@ jobs:
     - name: Setup WDK
       shell: powershell
       run: |
-        choco install windows-driver-kit -y
+        # Download and install WDK
+        Write-Host "Downloading WDK installer..."
+        Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2249371" -OutFile "$env:TEMP\wdksetup.exe"
+        
+        Write-Host "Installing WDK (this may take several minutes)..."
+        Start-Process -FilePath "$env:TEMP\wdksetup.exe" -ArgumentList "/quiet", "/norestart" -Wait
+        
+        Write-Host "WDK installation complete"
         
     - name: Patch windef.hpp for MSVC compatibility
       shell: powershell
