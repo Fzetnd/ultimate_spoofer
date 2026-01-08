@@ -17,55 +17,10 @@ jobs:
     
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
-    
-    - name: Setup WDK
-      shell: powershell
-      run: |
-        # Download and install WDK
-        Write-Host "Downloading WDK installer..."
-        Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2249371" -OutFile "$env:TEMP\wdksetup.exe"
         
-        Write-Host "Installing WDK (this may take several minutes)..."
-        Start-Process -FilePath "$env:TEMP\wdksetup.exe" -ArgumentList "/quiet", "/norestart" -Wait
-        
-        Write-Host "WDK installation complete"
-    
-    - name: Add ATL components
-      shell: powershell
-      run: |
-        # Install ATL via Visual Studio installer
-        $vsInstallerPath = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
-        if (Test-Path $vsInstallerPath) {
-          Write-Host "Installing ATL components..."
-          Start-Process -FilePath $vsInstallerPath -ArgumentList "modify", "--installPath", "C:\Program Files\Microsoft Visual Studio\2022\Enterprise", "--add", "Microsoft.VisualStudio.Component.VC.ATL", "--quiet", "--norestart" -Wait
-        }
-        
-    - name: Patch windef.hpp for MSVC compatibility
-      shell: powershell
-      run: |
-        $file = "driver_shellcode\windef.hpp"
-        
-        # Backup original
-        Copy-Item $file "$file.backup"
-        
-        # Read content
-        $content = Get-Content $file -Raw
-        
-        # Add MSVC alignment macro after #pragma once
-        $content = $content -replace '(#pragma once)', "`$1`r`n`r`n#ifdef _MSC_VER`r`n    #define ALIGN(x) __declspec(align(x))`r`n#else`r`n    #define ALIGN(x) __attribute__((aligned(x)))`r`n#endif"
-        
-        # Replace all __attribute__((aligned(X))) with ALIGN(X)
-        $content = $content -replace '__attribute__\(\(aligned\((\d+)\)\)\)', 'ALIGN($1)'
-        
-        # Write back
-        Set-Content $file $content
-        
-        Write-Host "Patched windef.hpp successfully"
-    
     - name: Add _CRT_SECURE_NO_WARNINGS to spoof_checker
       shell: powershell
       run: |
-        # Add to all .cpp files in spoof_checker
         Get-ChildItem "spoof_checker\*.cpp" | ForEach-Object {
           $content = Get-Content $_.FullName -Raw
           if ($content -notmatch '#define _CRT_SECURE_NO_WARNINGS') {
@@ -75,37 +30,21 @@ jobs:
         }
         Write-Host "Added _CRT_SECURE_NO_WARNINGS to spoof_checker files"
     
-    - name: Retarget solution to available SDK
-      shell: powershell
-      run: |
-        # Find available Windows SDK version
-        $sdkPath = "C:\Program Files (x86)\Windows Kits\10\Include"
-        $availableSDKs = Get-ChildItem $sdkPath | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending
-        
-        if ($availableSDKs.Count -gt 0) {
-          $latestSDK = $availableSDKs[0].Name
-          Write-Host "Found Windows SDK: $latestSDK"
-          
-          # Update all .vcxproj files to use the available SDK
-          Get-ChildItem -Recurse -Filter "*.vcxproj" | ForEach-Object {
-            $content = Get-Content $_.FullName -Raw
-            $content = $content -replace '<WindowsTargetPlatformVersion>[\d\.]+</WindowsTargetPlatformVersion>', "<WindowsTargetPlatformVersion>$latestSDK</WindowsTargetPlatformVersion>"
-            Set-Content $_.FullName $content
-            Write-Host "Updated $($_.Name) to SDK $latestSDK"
-          }
-        }
-    
-    - name: Build solution
+    - name: Build shellcode_builder
       shell: cmd
       run: |
-        msbuild ultimate_spoofer.sln /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:WDKContentRoot="C:\Program Files (x86)\Windows Kits\10\" /p:TreatWarningAsError=false /m
+        msbuild shellcode_builder\shellcode_builder.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:TreatWarningAsError=false
+        
+    - name: Build wmic_block
+      shell: cmd
+      run: |
+        msbuild wmic_block\wmic_block.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:PlatformToolset=v142 /p:TreatWarningAsError=false
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       if: success()
       with:
-        name: ultimate-spoofer-debug-x64
+        name: ultimate-spoofer-partial-build
         path: |
           x64/Debug/*.exe
           x64/Debug/*.dll
-          x64/Debug/*.sys
